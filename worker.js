@@ -255,28 +255,33 @@ async function runCommand(message, command, env, botUsername) {
 }
 
 async function processUpdate(update, env) {
-  if (!(await rememberUpdate(update, env))) return;
-  const message = update.message || update.edited_message;
-  if (!message?.chat) return;
-  const text = message.text || "";
-  const afk = await env.DB.prepare("SELECT value FROM settings WHERE key='afk'").first();
-  const command = parseCommand(text, env.BOT_USERNAME || "");
-  if (!command && message.chat.type === "private" && message.from && afk) {
-    const state = JSON.parse(afk.value);
-    const key = "afk_seen_" + message.from.id;
-    const previous = await env.DB.prepare("SELECT value FROM settings WHERE key=?").bind(key).first();
-    const now = Math.floor(Date.now() / 1000);
-    if (!previous || now - Number(previous.value) > 600) {
-      await env.DB.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(key, String(now)).run();
-      await reply(env, message.chat.id, "🌙 فعلاً در دسترس نیستم." + (state.reason ? "\nدلیل: " + html(state.reason) : ""));
-    }
-  }
-  if (!command) return;
   try {
-    await runCommand(message, command, env);
+    if (!(await rememberUpdate(update, env))) return;
+    const message = update.message || update.edited_message;
+    if (!message?.chat) return;
+    const text = message.text || "";
+    const afk = await env.DB.prepare("SELECT value FROM settings WHERE key='afk'").first();
+    const command = parseCommand(text, env.BOT_USERNAME || "");
+    if (!command && message.chat.type === "private" && message.from && afk) {
+      const state = JSON.parse(afk.value);
+      const key = "afk_seen_" + message.from.id;
+      const previous = await env.DB.prepare("SELECT value FROM settings WHERE key=?").bind(key).first();
+      const now = Math.floor(Date.now() / 1000);
+      if (!previous || now - Number(previous.value) > 600) {
+        await env.DB.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(key, String(now)).run();
+        await reply(env, message.chat.id, "🌙 فعلاً در دسترس نیستم." + (state.reason ? "\\nدلیل: " + html(state.reason) : ""));
+      }
+    }
+    if (!command) return;
+    try {
+      await runCommand(message, command, env);
+    } catch (error) {
+      console.error("command failed", command.name, error?.message || error);
+      await reply(env, message.chat.id, "⚠️ " + html(error?.message || "خطای نامشخص"));
+    }
   } catch (error) {
-    console.error("command failed", command.name, error?.message || error);
-    await reply(env, message.chat.id, "⚠️ " + html(error?.message || "خطای نامشخص"));
+    await env.DB.prepare("DELETE FROM processed_updates WHERE update_id=?").bind(update.update_id).run();
+    throw error;
   }
 }
 
@@ -316,8 +321,13 @@ export default {
     let update;
     try { update = await request.json(); }
     catch { return new Response("Bad Request", { status: 400 }); }
-    ctx.waitUntil(processUpdate(update, env).catch(error => console.error("update failed", error)));
-    return new Response("OK", { status: 200 });
+    try {
+      await processUpdate(update, env);
+      return new Response("OK", { status: 200 });
+    } catch (error) {
+      console.error("update failed", error?.message || error);
+      return new Response("Temporary processing failure", { status: 500 });
+    }
   },
   async scheduled(event, env, ctx) {
     ctx.waitUntil(deliverScheduled(env));
