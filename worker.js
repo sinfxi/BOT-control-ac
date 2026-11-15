@@ -120,6 +120,7 @@ async function runCommand(message, command, env, botUsername) {
     return say(`<b>${html(info.title || info.first_name || "گفتگو")}</b>\nنوع: ${html(info.type)}\nشناسه: <code>${info.id}</code>\nاعضا: ${count}`);
   }
   if (name === "stats") {
+    await requireModerator(message, env);
     const [chats, messages, scheduled] = await Promise.all([
       env.DB.prepare("SELECT COUNT(*) n FROM chats").first(),
       env.DB.prepare("SELECT COUNT(*) n FROM messages").first(),
@@ -203,6 +204,7 @@ async function runCommand(message, command, env, botUsername) {
     return say("🗑 پیام حذف شد.");
   }
   if (name === "schedule") {
+    await requireModerator(message, env);
     const match = /^(\d+[smhd])\s+([\s\S]+)$/.exec(args);
     if (!match) throw new Error("نمونه: /schedule 30m متن پیام");
     const seconds = durationSeconds(match[1]);
@@ -213,6 +215,7 @@ async function runCommand(message, command, env, botUsername) {
     return say(`⏰ پیام با شناسهٔ ${result.meta.last_row_id} زمان‌بندی شد.`);
   }
   if (name === "scheduled") {
+    await requireModerator(message, env);
     const rows = await env.DB.prepare("SELECT id,text,due_at FROM scheduled_messages WHERE chat_id=? AND sent_at IS NULL ORDER BY due_at LIMIT 10").bind(String(chatId)).all();
     if (!rows.results.length) return say("پیام زمان‌بندی‌شده‌ای وجود ندارد.");
     return say("<b>پیام‌های زمان‌بندی‌شده</b>\n" + rows.results.map(x => `#${x.id} — ${new Date(x.due_at * 1000).toLocaleString("fa-IR")} — ${html(x.text.slice(0, 80))}`).join("\n"));
@@ -236,11 +239,13 @@ async function runCommand(message, command, env, botUsername) {
     return say("<pre>" + html(body.slice(0, 3800)) + "</pre>");
   }
   if (name === "afk") {
+    if (message.chat.type !== "private" || !env.OWNER_ID || String(message.from?.id) !== String(env.OWNER_ID)) throw new Error("این تنظیم فقط در گفت‌وگوی خصوصی و برای مالک ربات فعال است.");
     const value = JSON.stringify({ enabled: true, reason: args.slice(0, 300) });
     await env.DB.prepare("INSERT INTO settings(key,value) VALUES('afk',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(value).run();
     return say("🌙 پاسخ خودکار ربات در گفت‌وگوهای خصوصی فعال شد.");
   }
   if (name === "unafk") {
+    if (message.chat.type !== "private" || !env.OWNER_ID || String(message.from?.id) !== String(env.OWNER_ID)) throw new Error("این تنظیم فقط در گفت‌وگوی خصوصی و برای مالک ربات فعال است.");
     await env.DB.prepare("DELETE FROM settings WHERE key='afk'").run();
     return say("☀️ پاسخ خودکار غیرفعال شد.");
   }
