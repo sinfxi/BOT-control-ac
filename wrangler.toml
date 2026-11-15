@@ -1,0 +1,12 @@
+name = "bot-control-ac"
+main = "worker.js"
+compatibility_date = "2026-11-15"
+workers_dev = true
+
+[triggers]
+crons = ["* * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bot-control-ac-db"
+database_id = "e1f0ab8f-181e-4d6a-a203-3adc816a6ae8"
