@@ -160,7 +160,8 @@ async function runCommand(message, command, env, botUsername) {
       return say("👢 کاربر از گروه اخراج شد.");
     }
     if (name === "mute") {
-      const duration = durationSeconds(words[1]) || 3600;
+      const durationToken = message.reply_to_message ? words[0] : words[1];
+      const duration = durationSeconds(durationToken) || 3600;
       const until_date = Math.floor(Date.now() / 1000) + duration;
       await telegram(env, "restrictChatMember", {
         chat_id: chatId, user_id: userId, until_date,
