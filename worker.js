@@ -221,6 +221,7 @@ async function runCommand(message, command, env, botUsername) {
     return say("<b>پیام‌های زمان‌بندی‌شده</b>\n" + rows.results.map(x => `#${x.id} — ${new Date(x.due_at * 1000).toLocaleString("fa-IR")} — ${html(x.text.slice(0, 80))}`).join("\n"));
   }
   if (name === "unschedule") {
+    await requireModerator(message, env);
     if (!/^\d+$/.test(args)) throw new Error("شناسهٔ پیام زمان‌بندی‌شده را وارد کن.");
     const result = await env.DB.prepare("DELETE FROM scheduled_messages WHERE id=? AND chat_id=? AND sent_at IS NULL").bind(Number(args), String(chatId)).run();
     return say(result.meta.changes ? "✅ زمان‌بندی حذف شد." : "این شناسه پیدا نشد.");
