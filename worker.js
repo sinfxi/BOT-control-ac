@@ -281,6 +281,9 @@ async function processUpdate(update, env) {
 }
 
 async function deliverScheduled(env) {
+  await env.DB.prepare("DELETE FROM processed_updates WHERE processed_at < datetime('now', '-30 days')").run();
+  await env.DB.prepare("DELETE FROM messages WHERE created_at < datetime('now', '-30 days')").run();
+  await env.DB.prepare("DELETE FROM scheduled_messages WHERE sent_at IS NOT NULL AND sent_at != 'FAILED' AND sent_at < datetime('now', '-30 days')").run();
   const now = Math.floor(Date.now() / 1000);
   const due = await env.DB.prepare("SELECT id,chat_id,text FROM scheduled_messages WHERE sent_at IS NULL AND due_at<=? ORDER BY due_at LIMIT 25").bind(now).all();
   for (const item of due.results) {
