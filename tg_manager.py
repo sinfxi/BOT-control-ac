@@ -998,3 +998,249 @@ async def cmd_silence(c: Ctx):
         raise CommandError("مدت نامعتبر؛ مثال: 1h")
     await c.client.edit_permissions(chat, user, until_date=dur, send_messages=False)
     await c.flash("🤐 ساکت شد.")
+
+
+@command("unsilence", "unsilence [کاربر]", "رفع ممنوعیت ارسال پیام", "گروه")
+async def cmd_unsilence(c: Ctx):
+    chat = await c.group_chat()
+    user, _ = await c.user_and_rest()
+    await c.client.edit_permissions(chat, user, send_messages=True)
+    await c.flash("✅ آزاد شد.")
+
+
+@command("promote", "promote [کاربر] [عنوان]", "ارتقا به ادمین (حذف پیام/بن/دعوت/پین)", "گروه")
+async def cmd_promote(c: Ctx):
+    chat = await c.group_chat()
+    user, rest = await c.user_and_rest()
+    await c.client.edit_admin(chat, user, is_admin=True, delete_messages=True, ban_users=True,
+                              invite_users=True, pin_messages=True, add_admins=False,
+                              change_info=False, title=rest[:16] or None)
+    await c.flash("⬆️ ادمین شد.")
+
+
+@command("demote", "demote [کاربر]", "برداشتن ادمینی", "گروه")
+async def cmd_demote(c: Ctx):
+    chat = await c.group_chat()
+    user, _ = await c.user_and_rest()
+    await c.client.edit_admin(chat, user, is_admin=False, change_info=False, post_messages=False,
+                              edit_messages=False, delete_messages=False, ban_users=False,
+                              invite_users=False, pin_messages=False, add_admins=False)
+    await c.flash("⬇️ ادمینی برداشته شد.")
+
+
+# ───────────────────────────── خودکارسازی و بکاپ ─────────────────────────────
+@command("afk", "afk [دلیل]", "فعال کردن پاسخ خودکار در پی‌وی‌ها", "ابزار")
+async def cmd_afk(c: Ctx):
+    c.app.state.data["afk"] = {"since": time.time(), "reason": c.args}
+    c.app.afk_seen.clear()
+    c.app.state.save()
+    await c.flash("🌙 حالت AFK فعال شد.")
+
+
+@command("unafk", "unafk", "غیرفعال کردن AFK", "ابزار")
+async def cmd_unafk(c: Ctx):
+    c.app.state.data["afk"] = None
+    c.app.state.save()
+    await c.flash("☀️ AFK غیرفعال شد.")
+
+
+@command("backup", "backup", "بکاپ JSON از مخاطبین و فهرست چت‌ها → Saved Messages", "ابزار", private_only=True)
+async def cmd_backup(c: Ctx):
+    await c.say("⏳ در حال تهیه‌ی بکاپ…")
+    me = await c.client.get_me()
+    res = await c.client(functions.contacts.GetContactsRequest(hash=0))
+    contacts = [{"id": u.id, "first_name": u.first_name, "last_name": u.last_name,
+                 "username": u.username, "phone": u.phone} for u in getattr(res, "users", [])]
+    dialogs = [{"id": d.id, "name": d.name, "type": kind_of(d.entity), "unread": d.unread_count}
+               async for d in c.client.iter_dialogs()]
+    path = c.cfg.exports / f"backup_{datetime.now():%Y%m%d_%H%M%S}.json"
+    path.write_text(json.dumps({
+        "exported_at": datetime.now().isoformat(),
+        "me": {"id": me.id, "username": me.username, "name": display_name(me)},
+        "contacts": contacts, "dialogs": dialogs,
+    }, ensure_ascii=False, indent=1), "utf-8")
+    await c.client.send_file("me", str(path),
+                             caption=f"💾 بکاپ — {len(contacts)} مخاطب، {len(dialogs)} چت")
+    await c.flash("✅ بکاپ به Saved Messages ارسال شد.", delay=6)
+
+
+# ───────────────────────────── توزیع‌کننده و هندلرها ─────────────────────────────
+def register_handlers(app: App) -> None:
+    client, prefix = app.client, app.cfg.prefix
+
+    @client.on(events.NewMessage(
+        outgoing=True,
+        func=lambda e: bool(e.raw_text) and e.raw_text.startswith(prefix)))
+    async def on_command(event):
+        if event.message.fwd_from:
+            return
+        body = (event.raw_text or "")[len(prefix):]
+        if not body or body[0].isspace():
+            return
+        name, rest = split_first(body)
+        cmd = COMMANDS.get(name.lower())
+        if cmd is None:
+            return  # متن عادی است، دست نزن
+        ctx = Ctx(app, event, rest)
+        log.info("command: %s (chat=%s)", cmd.name, event.chat_id)
+        try:
+            if cmd.private_only and not ctx.in_saved:
+                raise CommandError("این دستور حساس است؛ فقط در Saved Messages اجرا کن.")
+            await cmd.func(ctx)
+        except CommandError as e:
+            await ctx.flash(f"⚠️ {esc(e)}", delay=6)
+        except FloodWaitError as e:
+            await ctx.flash(f"⏳ محدودیت تلگرام؛ {e.seconds} ثانیه صبر کن.", delay=8)
+        except RPCError as e:
+            msg = _ERR_FA.get(type(e).__name__, f"{type(e).__name__}: {e}")
+            log.warning("rpc error in %s: %s", cmd.name, type(e).__name__)
+            await ctx.flash(f"❌ {esc(msg)}", delay=8)
+        except Exception as e:  # noqa: BLE001
+            log.exception("unexpected error in %s", cmd.name)
+            await ctx.flash(f"❌ خطای غیرمنتظره: {esc(type(e).__name__)}", delay=8)
+
+    @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
+    async def on_incoming(event):
+        afk = app.state.data.get("afk")
+        if not afk:
+            return
+        try:
+            sender = await event.get_sender()
+            if (sender is None or getattr(sender, "bot", False) or sender.id == 777000
+                    or getattr(sender, "is_self", False)):
+                return
+            now = time.time()
+            if now - app.afk_seen.get(sender.id, 0) < 600:  # حداکثر یک پاسخ در ۱۰ دقیقه
+                return
+            app.afk_seen[sender.id] = now
+            reason = f"\nدلیل: {afk['reason']}" if afk.get("reason") else ""
+            await event.reply(
+                f"🌙 فعلاً در دسترس نیستم (از {fmt_secs(now - afk['since'])} پیش).{reason}",
+                parse_mode=None)
+        except Exception:  # noqa: BLE001
+            log.exception("afk handler failed")
+
+
+# ───────────────────────────── ورود (شماره + کد) ─────────────────────────────
+async def ainput(prompt: str) -> str:
+    return (await asyncio.to_thread(input, prompt)).strip().translate(_DIGITS)
+
+
+async def interactive_login(client: TelegramClient) -> None:
+    if await client.is_user_authorized():
+        return
+    print("\n── ورود به اکانت تلگرام ──")
+    print("کد تأیید داخل اپ تلگرام (چت «Telegram») یا با SMS می‌آید. آن را به هیچ‌کس نده.\n")
+
+    while True:
+        phone = re.sub(r"[\s\-()]", "", await ainput("شماره با کد کشور (مثل +989121234567): "))
+        if not re.fullmatch(r"\+\d{7,15}", phone):
+            print("قالب شماره نادرست است.")
+            continue
+        try:
+            sent = await client.send_code_request(phone)
+            break
+        except PhoneNumberInvalidError:
+            print("شماره نامعتبر است.")
+        except PhoneNumberBannedError:
+            sys.exit("این شماره توسط تلگرام مسدود شده است.")
+        except ApiIdInvalidError:
+            sys.exit("API_ID / API_HASH نامعتبر است.")
+        except FloodWaitError as e:
+            sys.exit(f"تلگرام درخواست‌ها را محدود کرده؛ {e.seconds} ثانیه بعد دوباره امتحان کن.")
+
+    for _ in range(5):
+        code = (await ainput("کد تأیید (resend = ارسال مجدد): ")).replace(" ", "").replace("-", "")
+        try:
+            if code.lower() == "resend":
+                sent = await client.send_code_request(phone)
+                print("کد دوباره ارسال شد.")
+                continue
+            await client.sign_in(phone=phone, code=code, phone_code_hash=sent.phone_code_hash)
+            return
+        except SessionPasswordNeededError:
+            await _two_factor(client)
+            return
+        except PhoneCodeInvalidError:
+            print("کد اشتباه است.")
+        except PhoneCodeExpiredError:
+            print("کد منقضی شد؛ کد جدید فرستاده شد.")
+            sent = await client.send_code_request(phone)
+        except PhoneNumberUnoccupiedError:
+            sys.exit("این شماره در تلگرام ثبت‌نام نشده است.")
+        except FloodWaitError as e:
+            sys.exit(f"محدودیت تلگرام؛ {e.seconds} ثانیه صبر کن.")
+    sys.exit("تعداد تلاش‌ها تمام شد.")
+
+
+async def _two_factor(client: TelegramClient) -> None:
+    for _ in range(5):
+        pw = await asyncio.to_thread(getpass, "رمز تأیید دو مرحله‌ای (نمایش داده نمی‌شود): ")
+        try:
+            await client.sign_in(password=pw)
+            return
+        except PasswordHashInvalidError:
+            print("رمز اشتباه است.")
+        except FloodWaitError as e:
+            sys.exit(f"محدودیت تلگرام؛ {e.seconds} ثانیه صبر کن.")
+    sys.exit("تعداد تلاش‌ها تمام شد.")
+
+
+# ───────────────────────────── main ─────────────────────────────
+def setup_logging(cfg: Config) -> None:
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    fh = RotatingFileHandler(cfg.data_dir / "tgmanager.log", maxBytes=1_000_000,
+                             backupCount=3, encoding="utf-8")
+    sh = logging.StreamHandler()
+    for h in (fh, sh):
+        h.setFormatter(fmt)
+        root.addHandler(h)
+    logging.getLogger("telethon").setLevel(logging.WARNING)  # بدون لاگ محتوای پیام
+
+
+def lock_down_session(cfg: Config) -> None:
+    for p in cfg.data_dir.glob("account.session*"):
+        try:
+            os.chmod(p, 0o600)
+        except OSError:
+            pass
+
+
+async def main() -> None:
+    cfg = Config.load()
+    setup_logging(cfg)
+    client = TelegramClient(
+        str(cfg.session_path), cfg.api_id, cfg.api_hash,
+        device_model="TG Manager", app_version=VERSION,
+        lang_code="fa", system_lang_code="fa-IR",
+        connection_retries=-1, retry_delay=2, request_retries=5,
+        auto_reconnect=True, flood_sleep_threshold=120,
+    )
+    client.parse_mode = None  # متن کاربر هرگز ناخواسته فرمت نمی‌شود
+    await client.connect()
+    try:
+        await interactive_login(client)
+        lock_down_session(cfg)
+        me = await client.get_me()
+        app = App(client, cfg, State(cfg.data_dir / "state.json"), me, asyncio.Event())
+        register_handlers(app)
+        log.info("logged in as id=%s — commands prefix %r", me.id, cfg.prefix)
+        print(f"\n✅ وارد شدی: {display_name(me)}. در Saved Messages بنویس: {cfg.prefix}help")
+        print("برای توقف: Ctrl+C یا دستور stop\n")
+        disc = asyncio.ensure_future(client.run_until_disconnected())
+        stop = asyncio.ensure_future(app.stop_event.wait())
+        await asyncio.wait({disc, stop}, return_when=asyncio.FIRST_COMPLETED)
+        for t in (disc, stop):
+            t.cancel()
+    finally:
+        if client.is_connected():
+            await client.disconnect()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nخارج شد.")
