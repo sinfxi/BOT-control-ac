@@ -20,13 +20,14 @@
    - `TELEGRAM_WEBHOOK_SECRET`: یک رشتهٔ تصادفی امن، ۱ تا ۲۵۶ نویسه و فقط شامل حروف انگلیسی، عدد، `_` و `-`
 4. متغیر متنی `OWNER_ID` را با شناسهٔ عددی مالک تنظیم کن.
 5. دیتابیس D1 با نام `bot-control-ac-db` و binding با نام `DB` به Worker متصل است.
-6. پس از Deploy، Webhook را ثبت کن:
+6. پس از Deploy و ثبت Secretها، در PowerShell داخل پوشهٔ پروژه اجرا کن:
 
-```bash
-curl -X POST "https://api.telegram.org/bot< BOT_TOKEN >/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://bot-control-ac.<YOUR_SUBDOMAIN>.workers.dev/telegram","secret_token":"<TELEGRAM_WEBHOOK_SECRET>","allowed_updates":["message","edited_message"]}'
+```powershell
+.\setup-webhook.ps1
 ```
+
+اسکریپت توکن BotFather و Secret را به‌صورت ورودی مخفی می‌گیرد و Webhook را روی این نشانی ثبت می‌کند:
+`https://bot-control-ac.99lq9ohj-kfshcd.workers.dev/telegram`
 
 توکن و secret را داخل GitHub، کد، Issue یا پیام عمومی قرار نده.
 
