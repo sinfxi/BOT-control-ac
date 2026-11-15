@@ -269,7 +269,7 @@ async function processUpdate(update, env) {
       const now = Math.floor(Date.now() / 1000);
       if (!previous || now - Number(previous.value) > 600) {
         await env.DB.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(key, String(now)).run();
-        await reply(env, message.chat.id, "🌙 فعلاً در دسترس نیستم." + (state.reason ? "\\nدلیل: " + html(state.reason) : ""));
+        await reply(env, message.chat.id, "🌙 فعلاً در دسترس نیستم." + (state.reason ? "\nدلیل: " + html(state.reason) : ""));
       }
     }
     if (!command) return;
