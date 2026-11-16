@@ -1220,12 +1220,16 @@ async def main() -> None:
     )
     client.parse_mode = None  # متن کاربر هرگز ناخواسته فرمت نمی‌شود
     await client.connect()
+    agent_task = None
     try:
         await interactive_login(client)
         lock_down_session(cfg)
         me = await client.get_me()
         app = App(client, cfg, State(cfg.data_dir / "state.json"), me, asyncio.Event())
         register_handlers(app)
+        if os.getenv("FXI_AGENT_API_KEY", "").strip():
+            from agent_bridge import run_agent
+            agent_task = asyncio.create_task(run_agent(client, me))
         log.info("logged in as id=%s — commands prefix %r", me.id, cfg.prefix)
         print(f"\n✅ وارد شدی: {display_name(me)}. در Saved Messages بنویس: {cfg.prefix}help")
         print("برای توقف: Ctrl+C یا دستور stop\n")
@@ -1235,9 +1239,11 @@ async def main() -> None:
         for t in (disc, stop):
             t.cancel()
     finally:
+        if agent_task is not None:
+            agent_task.cancel()
+            await asyncio.gather(agent_task, return_exceptions=True)
         if client.is_connected():
             await client.disconnect()
-
 
 if __name__ == "__main__":
     try:
